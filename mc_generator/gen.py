@@ -5,7 +5,7 @@ class TrainingConfig:
     image_size = 32  # the generated image resolution
     train_batch_size = 16
     eval_batch_size = 16  # how many images to sample during evaluation
-    num_epochs = 11
+    num_epochs = 50
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 500
@@ -16,7 +16,7 @@ class TrainingConfig:
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub
     hub_private_repo = False  
-    overwrite_output_dir = True  # overwrite the old model when re-running the notebook
+    overwrite_output_dir = False  # overwrite the old model when re-running the notebook
     seed = 0
 
 config = TrainingConfig()
@@ -48,6 +48,7 @@ dataset.set_transform(transform)
 
 import torch
 
+# dataset = dataset[:100] # REMOVE THIS IF NEED: make mini dataset
 train_dataloader = torch.utils.data.DataLoader(dataset, batch_size=config.train_batch_size, shuffle=True)
 
 from diffusers import UNet2DModel
@@ -186,11 +187,12 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, lr_s
     global_step = 0
 
     # Now you train the model
+    epoch_losses = []
     for epoch in range(config.num_epochs):
-        print(epoch)
         progress_bar = tqdm(total=len(train_dataloader), disable=not accelerator.is_local_main_process)
         progress_bar.set_description(f"Epoch {epoch}")
-
+        
+        batch_losses = []
         for step, batch in enumerate(train_dataloader):
             clean_images = batch['images']
             # Sample noise to add to the images
@@ -208,6 +210,7 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, lr_s
                 # Predict the noise residual
                 noise_pred = model(noisy_images, timesteps, return_dict=False)[0]
                 loss = F.mse_loss(noise_pred, noise)
+                batch_losses.append(loss.item())
                 accelerator.backward(loss)
 
                 accelerator.clip_grad_norm_(model.parameters(), 1.0)
@@ -220,6 +223,7 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, lr_s
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
             global_step += 1
+        epoch_losses.append(sum(batch_losses) / len(batch_losses))
 
         # After each epoch you optionally sample some demo images with evaluate() and save the model
         if accelerator.is_main_process:
@@ -227,12 +231,14 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, lr_s
 
             if (epoch + 1) % config.save_image_epochs == 0 or epoch == config.num_epochs - 1:
                 evaluate(config, epoch, pipeline)
+                pass
 
             if (epoch + 1) % config.save_model_epochs == 0 or epoch == config.num_epochs - 1:
                 if config.push_to_hub:
                     repo.push_to_hub(commit_message=f"Epoch {epoch}", blocking=True)
                 else:
-                    pipeline.save_pretrained(config.output_dir) 
+                    pipeline.save_pretrained(config.output_dir)
+    print(epoch_losses)
 
 
 

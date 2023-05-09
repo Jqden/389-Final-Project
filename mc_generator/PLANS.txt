@@ -1,0 +1,5 @@
+We could assume that the left and right sides of the face are always symettrical.
+- Then we can remove the left side from the training data to train on less complicated features
+- We can manually duplicate that side of the face to create the output
+
+We can reduce the number of blockout channels to make the model less complicated, train faster, etc
